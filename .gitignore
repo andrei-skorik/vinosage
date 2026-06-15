@@ -1,9 +1,12 @@
 .env
+.env.*
 __pycache__/
+*.py[cod]
 *.pyc
 *.pyo
 .pytest_cache/
 .ruff_cache/
+.streamlit/secrets.toml
 *.egg-info/
 dist/
 build/
