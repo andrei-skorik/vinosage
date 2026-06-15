@@ -68,26 +68,47 @@ _HISTORY_WINDOW = 10
 
 
 _HIST_FOOD_KWS = {
-    "chocolate","cake","steak","beef","lamb","venison","pork",
+    # "cake" omitted — see pair_with_food._FOOD_NOUNS for rationale.
+    "chocolate","steak","beef","lamb","venison","pork",
     "chicken","turkey","duck","salmon","tuna","fish","seafood","lobster",
     "shrimp","oyster","sushi","pasta","pizza","risotto","mushroom","truffle",
     "cheese","salad","barbecue","curry","spicy","tagine","casserole","meat",
 }
 
 
+_HISTORY_COMPOUND: dict[str, str] = {
+    "chocolate": (
+        r"\bchocolate\s+(?:pudding|puddings|dessert|desserts|cake|cakes|mousse|"
+        r"fondue|brownie|brownies|ice\s*cream|fondant|torte|tart|tarts|truffle|"
+        r"fudge|ganache|souffl[eé])\b"
+        r"|\b(?:with|for|alongside)\s+(?:a\s+)?chocolate\b(?!\s+(?:note|hint|"
+        r"flavou?r|touch|character|aroma))"
+    ),
+    "cake": (
+        r"\b(?:with|for|alongside)\s+(?:a\s+)?(?:\w+\s+){0,2}cakes?\b"
+        r"(?!-like|\s+like|\s+note|\s+notes|\s+hint|\s+flavou?rs?|\s+character|\s+aroma)"
+    ),
+}
+
+
 def _history_source_ok(wine, food_words: list[str]) -> bool:
     """Return True if wine has catalog pairing evidence for any of the food_words.
 
-    Uses case-sensitive matching on the original description: food keywords appear
-    lowercase ("chocolate puddings") but wine-name references are capitalised
-    ("The Chocolate Block"), so this avoids false positives.
+    Uses compound patterns for keywords that appear both as tasting notes and food
+    pairings (e.g. "chocolate"): "dark chocolate notes" ≠ "with a chocolate dessert".
     """
     import re as _re
-    raw = (getattr(wine, "payload", {}) or {}).get("description") or ""
-    return any(
-        _re.search(r'\b' + _re.escape(fw) + r'\b', raw)
-        for fw in food_words
-    )
+    raw = (getattr(wine, "payload", {}) or {}).get("description")
+    if not isinstance(raw, str):
+        return False
+    for fw in food_words:
+        if fw in _HISTORY_COMPOUND:
+            if _re.search(_HISTORY_COMPOUND[fw], raw):
+                return True
+        else:
+            if _re.search(r'\b' + _re.escape(fw) + r'\b', raw):
+                return True
+    return False
 
 
 def _agent_history(messages: list, current_query: str = "") -> list:

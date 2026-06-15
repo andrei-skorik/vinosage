@@ -59,25 +59,87 @@ def _best_rule(dish: str) -> dict[str, Any]:
     return {}
 
 
+# Compound patterns for keywords that also appear as tasting-note descriptors.
+# A simple word-boundary match would produce false positives:
+#   "dark chocolate, vanilla and spice"  → TASTING NOTE  (no match wanted)
+#   "with a chocolate dessert"           → FOOD PAIRING  (match wanted)
+# Each pattern requires the keyword to appear in a food-pairing context.
+_COMPOUND_FOOD_PATTERNS: dict[str, str] = {
+    "chocolate": (
+        # "chocolate [food]" — chocolate modifying an actual food item
+        r"\bchocolate\s+(?:pudding|puddings|dessert|desserts|cake|cakes|mousse|"
+        r"fondue|brownie|brownies|ice\s*cream|fondant|torte|tart|tarts|truffle|"
+        r"fudge|ganache|souffl[eé])\b"
+        # "with/for [a] chocolate" — chocolate itself is the dish
+        r"|\b(?:with|for|alongside)\s+(?:a\s+)?chocolate\b(?!\s+(?:note|hint|flavou?r|"
+        r"touch|character|aroma))"
+    ),
+    # "notes of chocolate cake" → TASTING NOTE  (no match)
+    # "pairs with a chocolate cake" → FOOD PAIRING  (match)
+    "cake": (
+        r"\b(?:with|for|alongside)\s+(?:a\s+)?(?:\w+\s+){0,2}cakes?\b"
+        r"(?!-like|\s+like|\s+note|\s+notes|\s+hint|\s+flavou?rs?|\s+character|\s+aroma)"
+    ),
+}
+
+
+# Whitelist of actual food nouns. Only words from the dish name that appear in
+# this set become individual search keywords. Adjective descriptors ("dark",
+# "rich", "light", "milk", "white") are excluded automatically — preventing
+# false positives like "dark cherry" matching a "dark chocolate cake" query.
+_FOOD_NOUNS = frozenset({
+    # NOTE: "cake" is intentionally absent. "Cake" appears in catalog descriptions as
+    # many different types (Madeira cake, fish cakes, chocolate cake). Extracting it as
+    # an individual keyword from multi-word dishes like "dark chocolate cake" causes
+    # false matches (e.g. wines paired with Madeira cake or fish cakes). The "chocolate"
+    # compound pattern already handles "chocolate cake" via \bchocolate\s+cake\b.
+    # When the user's dish IS "cake" (single word), the full phrase is used directly.
+    "chocolate", "steak", "beef", "lamb", "venison", "pork",
+    "chicken", "turkey", "duck", "salmon", "tuna", "fish", "seafood", "lobster",
+    "shrimp", "oyster", "sushi", "pasta", "pizza", "risotto", "mushroom", "truffle",
+    "cheese", "salad", "barbecue", "curry", "spicy", "tagine", "casserole", "meat",
+    "pudding", "puddings", "mousse", "fondue", "brownie", "brownies", "tart", "tarts",
+    "bread", "brioche", "flatbread", "noodle", "noodles", "dumpling", "dumplings",
+    "prawn", "prawns", "crab", "squid", "octopus", "scallop", "scallops",
+    "quail", "pheasant", "burger", "soup", "stew", "chilli", "chili", "tapas",
+})
+
+
 def _desc_keywords(dish: str) -> list[str]:
-    """Extract meaningful keywords from dish name for description search."""
-    words = [w for w in re.split(r'\W+', dish.lower()) if len(w) > 3]
+    """Extract food nouns from a dish name.
+
+    Only known food nouns become individual keywords — descriptors like 'dark',
+    'rich', 'milk', 'white' are excluded automatically because they are not in
+    _FOOD_NOUNS. This prevents false positives such as 'dark cherry' in a wine
+    description matching a 'dark chocolate cake' query.
+    The full dish phrase is always included first for exact multi-word matching.
+    """
+    words = [w for w in re.split(r'\W+', dish.lower()) if w in _FOOD_NOUNS]
     return list(dict.fromkeys([dish.lower()] + words))
 
 
-def _desc_mentions_food(desc: str, title: str, keywords: list[str]) -> bool:
+def _desc_mentions_food(desc, title, keywords: list[str]) -> bool:
     """
     Return True only if the description mentions a keyword as a food (lowercase),
     NOT as part of a wine/product name (which would be capitalised).
 
     Example: "stand up to chocolate puddings" → match (lowercase 'chocolate').
              "the man behind The Chocolate Block" → no match ('Chocolate' is capitalised).
+
+    Handles NULL descriptions (NaN from pandas) gracefully — returns False.
     """
+    if not isinstance(desc, str):
+        return False
     for kw in keywords:
-        # Case-sensitive search for the lowercase keyword as a whole word.
-        # Wine-name references are always title-cased; food references are lowercase.
-        if re.search(r'\b' + re.escape(kw) + r'\b', desc):
-            return True
+        if kw in _COMPOUND_FOOD_PATTERNS:
+            # Use compound pattern to avoid matching tasting-note uses
+            # e.g. "dark chocolate notes" ≠ "with a chocolate dessert"
+            if re.search(_COMPOUND_FOOD_PATTERNS[kw], desc):
+                return True
+        else:
+            # Simple case-sensitive word-boundary match for other foods
+            if re.search(r'\b' + re.escape(kw) + r'\b', desc):
+                return True
     return False
 
 
@@ -160,7 +222,17 @@ def _run(
                 "source":      "catalog_description",
             })
 
-        return {"dish": dish, "pairings": pairings}
+        titles = [p["title"] for p in pairings]
+        return {
+            "dish": dish,
+            "pairings": pairings,
+            "agent_instruction": (
+                f"The catalog confirms exactly {len(pairings)} wine(s) pair with {dish!r}: "
+                f"{titles}. Recommend ONLY these wines for {dish!r}. "
+                f"Do NOT add any other wines as alternatives — any wine not in this list "
+                f"has NOT been confirmed as a {dish!r} pairing in the catalog."
+            ),
+        }
 
     except Exception as exc:
         return _ERR("INTERNAL", str(exc))
