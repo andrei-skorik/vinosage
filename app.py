@@ -76,16 +76,18 @@ _HIST_FOOD_KWS = {
 
 
 def _history_source_ok(wine, food_words: list[str]) -> bool:
-    """Return True if wine has catalog pairing evidence for any of the food_words."""
+    """Return True if wine has catalog pairing evidence for any of the food_words.
+
+    Uses case-sensitive matching on the original description: food keywords appear
+    lowercase ("chocolate puddings") but wine-name references are capitalised
+    ("The Chocolate Block"), so this avoids false positives.
+    """
     import re as _re
     raw = (getattr(wine, "payload", {}) or {}).get("description") or ""
-    title = (getattr(wine, "title", "") or "").lower()
-    cleaned = raw.lower().replace(title, " ")
-    for part in _re.findall(r'\b\w+\b', title):
-        for fw in food_words:
-            if fw in part:
-                cleaned = _re.sub(r'\b' + _re.escape(part) + r'\b', ' ', cleaned)
-    return any(fw in cleaned for fw in food_words)
+    return any(
+        _re.search(r'\b' + _re.escape(fw) + r'\b', raw)
+        for fw in food_words
+    )
 
 
 def _agent_history(messages: list, current_query: str = "") -> list:

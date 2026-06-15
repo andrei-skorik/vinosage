@@ -149,14 +149,14 @@ def _build_messages(
                           if w in _FOOD_KWS]
 
         def _has_desc_evidence(wine: RetrievedWine, food_words: list[str]) -> bool:
-            raw = (wine.payload.get("description") or "").lower()
-            title = wine.title.lower()
-            cleaned = raw.replace(title, " ")
-            for part in re.findall(r'\b\w+\b', title):
-                for fw in food_words:
-                    if fw in part:
-                        cleaned = re.sub(r'\b' + re.escape(part) + r'\b', ' ', cleaned)
-            return any(fw in cleaned for fw in food_words)
+            # Case-sensitive: food keywords appear lowercase in descriptions ("chocolate
+            # puddings") but capitalised when they're part of a wine name ("The Chocolate
+            # Block"). Searching the original text avoids false positives.
+            raw = wine.payload.get("description") or ""
+            return any(
+                re.search(r'\b' + re.escape(fw) + r'\b', raw)
+                for fw in food_words
+            )
 
         # Filter RAG list for pairing queries; use all for non-pairing queries
         if query_food:

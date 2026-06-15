@@ -67,26 +67,16 @@ def _desc_keywords(dish: str) -> list[str]:
 
 def _desc_mentions_food(desc: str, title: str, keywords: list[str]) -> bool:
     """
-    Return True only if the description mentions a keyword in a food-pairing context,
-    NOT merely as a reference to the wine's own name.
-    """
-    d = desc.lower()
-    t = title.lower()
+    Return True only if the description mentions a keyword as a food (lowercase),
+    NOT as part of a wine/product name (which would be capitalised).
 
+    Example: "stand up to chocolate puddings" → match (lowercase 'chocolate').
+             "the man behind The Chocolate Block" → no match ('Chocolate' is capitalised).
+    """
     for kw in keywords:
-        if kw not in d:
-            continue
-        # Strip all occurrences of the wine title (and multi-word sub-phrases containing
-        # the keyword) so we don't count the wine's own name as a food mention.
-        d_cleaned = d.replace(t, " ")
-        # Also strip any phrase that joins adjacent title words around the keyword
-        title_words = t.split()
-        for span in range(2, len(title_words) + 1):
-            for start in range(len(title_words) - span + 1):
-                phrase = " ".join(title_words[start : start + span])
-                if kw in phrase:
-                    d_cleaned = d_cleaned.replace(phrase, " ")
-        if kw in d_cleaned:
+        # Case-sensitive search for the lowercase keyword as a whole word.
+        # Wine-name references are always title-cased; food references are lowercase.
+        if re.search(r'\b' + re.escape(kw) + r'\b', desc):
             return True
     return False
 
