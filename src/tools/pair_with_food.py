@@ -171,9 +171,10 @@ pair_with_food = StructuredTool.from_function(
     name="pair_with_food",
     description=(
         "Given a dish or cuisine, return catalog wines whose description explicitly recommends "
-        "them with that dish. All returned wines are catalog-confirmed pairings — cite them "
-        "confidently using the catalog description text. If result is 'no_match', follow "
-        "agent_instruction exactly."
+        "them with that dish. IMPORTANT: recommend ONLY the wines this tool returns — do NOT "
+        "supplement with wines from the RAG context or other tools. All returned wines are "
+        "catalog-confirmed pairings — cite them confidently using the catalog description text. "
+        "If result is 'no_match', follow agent_instruction exactly and name no specific wines."
     ),
     args_schema=PairWithFoodArgs,
 )
