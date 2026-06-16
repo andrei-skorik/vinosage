@@ -53,14 +53,17 @@ def _format_filter_chips(filter_used: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
-def render_filter_badge(filter_used: dict[str, Any], locale: str) -> None:
-    """Show the self-query filter extracted from the user's message, right after
-    retrieval — so the user can confirm their request was understood correctly."""
-    if not filter_used:
-        return
-    chips = _format_filter_chips(filter_used)
+def render_filter_badge(filter_used: dict[str, Any], query: str, locale: str) -> None:
+    """Show what was understood from the user's request, right after retrieval —
+    so the user can confirm it was read correctly. Prefers the structured
+    self-query filter (e.g. "Red · Italy · ≤ €20.00"); falls back to echoing
+    the original query text when no hard filter was extracted (pairing /
+    open-ended requests like "suggest a dessert wine for chocolate")."""
+    chips = _format_filter_chips(filter_used) if filter_used else ""
     if chips:
         st.caption(f"🔍 {t('searching_for_label', locale)} {chips}")
+    elif query:
+        st.caption(f"🔍 {t('searching_for_label', locale)} “{query}”")
 
 
 def _format_tool_result(tool_name: str, result: Any, locale: str) -> str:
@@ -201,9 +204,12 @@ def render_chat_history(
         role = msg["role"]
         avatar = user_avatar if role == "user" else None
         with st.chat_message(role, avatar=avatar):
+            if role == "assistant":
+                # Badge first — mirrors the live view, where it appears during
+                # "Searching catalog", before the answer is even computed.
+                render_filter_badge(msg.get("filter_used", {}), msg.get("user_query", ""), locale)
             st.markdown(msg["content"])
             if role == "assistant":
-                render_filter_badge(msg.get("filter_used", {}), locale)
                 render_assistant_extras(
                     msg.get("sources", []),
                     msg.get("tool_calls", []),

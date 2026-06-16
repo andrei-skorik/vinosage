@@ -267,6 +267,14 @@ def main() -> None:
 
             # ── Agent call with 3-step progress stepper ───────────────────────
             with st.chat_message("assistant"):
+                # Own placeholder OUTSIDE st.status — the status widget's body
+                # only shows the current step's caption, so anything rendered
+                # inside it (like the badge) gets visually replaced once the
+                # label moves on to the next step. A separate slot keeps the
+                # badge visible for the rest of the turn, right where the user
+                # is still looking (next to the spinner) while nothing else
+                # has appeared yet.
+                badge_slot = st.empty()
                 with st.status(t("step_retrieve", locale), expanded=True) as status:
                     step1 = st.empty()
                     step1.caption(f"⏳ {t('step_retrieve', locale)}…")
@@ -276,7 +284,8 @@ def main() -> None:
                     except Exception:
                         rag_results, filter_used = [], {}
                     step1.caption(f"✓ {t('step_retrieve', locale)}")
-                    render_filter_badge(filter_used, locale)  # shown immediately, right after retrieval
+                    with badge_slot.container():
+                        render_filter_badge(filter_used, prompt, locale)
 
                     status.update(label=t("step_think", locale))
                     step2 = st.empty()
@@ -312,6 +321,7 @@ def main() -> None:
                 "sources": result.retrieved_wines,
                 "tool_calls": result.tool_calls,
                 "filter_used": result.filter_used,
+                "user_query": prompt,
             })
 
             # ── Update session metrics ────────────────────────────────────────
