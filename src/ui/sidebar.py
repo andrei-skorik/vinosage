@@ -5,6 +5,8 @@ import streamlit as st
 
 from src.config import ADMIN_PASSWORD, CHAT_MODELS, DEFAULT_LOCALE, DEFAULT_MODEL
 from src.i18n import t
+from src.ui.auth_view import render_auth_forms, render_profile_widget
+from src.ui.chat_view import export_messages_csv, export_messages_json
 
 _LOCALE_FLAGS = {"en": "🇬🇧 English", "de": "🇩🇪 Deutsch", "ru": "🇷🇺 Русский", "fi": "🇫🇮 Suomi"}
 _LOCALE_CODES = list(_LOCALE_FLAGS.keys())
@@ -16,6 +18,16 @@ def render_sidebar() -> None:
     with st.sidebar:
         st.markdown(f"# 🍷 {t('app_title', locale)}")
         st.caption(t("app_tagline", locale))
+        st.divider()
+
+        # Account: profile widget if logged in, else login/register forms.
+        # Optional — registering only unlocks avatar personalisation, it does
+        # not gate chat access (the separate age gate handles that).
+        if st.session_state.get("auth"):
+            render_profile_widget(locale)
+        else:
+            with st.expander(f"👤 {t('account_header', locale)}"):
+                render_auth_forms(locale)
         st.divider()
 
         # Language selector
@@ -80,6 +92,28 @@ def render_sidebar() -> None:
             st.rerun()
 
         st.divider()
+
+        # Export current session's conversation
+        messages = st.session_state.get("messages", [])
+        if messages:
+            st.markdown(f"**{t('export_chat_header', locale)}**")
+            session_tag = st.session_state.get("session_id", "session")[:8]
+            col_json, col_csv = st.columns(2)
+            col_json.download_button(
+                t("export_json_button", locale),
+                data=export_messages_json(messages),
+                file_name=f"vinosage_chat_{session_tag}.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+            col_csv.download_button(
+                t("export_csv_button", locale),
+                data=export_messages_csv(messages),
+                file_name=f"vinosage_chat_{session_tag}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+            st.divider()
 
         # Help & disclaimer
         with st.expander(f"❓ {t('help_header', locale)}"):

@@ -45,6 +45,8 @@ _DEFAULTS: dict = {
     "admin_unlocked": False,
     "queued_prompt": None,
     "scroll_to_bottom": False,
+    "auth": None,
+    "age_confirmed": False,
 }
 for _k, _v in _DEFAULTS.items():
     if _k not in st.session_state:
@@ -57,10 +59,12 @@ from src.logging_db import log_query, log_token_usage, log_tool_calls  # noqa: E
 from src.rag import retrieve  # noqa: E402
 from src.ratelimit import check_cost_cap, check_rate_limit  # noqa: E402
 from src.ui.admin import render_admin  # noqa: E402
+from src.ui.auth_view import is_age_gate_passed, render_age_gate  # noqa: E402
 from src.ui.chat_view import (  # noqa: E402
     render_assistant_extras,
     render_chat_history,
     render_empty_state,
+    render_filter_badge,
 )
 from src.ui.sidebar import render_sidebar  # noqa: E402
 
@@ -187,12 +191,22 @@ def _compute_cost_micros(model: str, input_tokens: int, output_tokens: int) -> i
     return int(input_tokens * pricing["in"] + output_tokens * pricing["out"])
 
 
+def _current_user() -> dict | None:
+    return st.session_state.get("auth")
+
+
 def main() -> None:
     render_sidebar()
 
     locale     = st.session_state.locale
     model      = st.session_state.model
     session_id = st.session_state.session_id
+
+    # Age gate blocks all chat functionality until confirmed — registering
+    # with the mandatory 18+ checkbox also satisfies it (see auth_view.py).
+    if not is_age_gate_passed():
+        render_age_gate(locale)
+        st.stop()
 
     # st.chat_input at module level → Streamlit fixes it at the bottom of the page.
     # Inside a container it would render inline (wrong position).
@@ -207,11 +221,13 @@ def main() -> None:
     else:
         chat_area = st.container()
 
+    user_avatar = (_current_user() or {}).get("avatar_url")
+
     with chat_area:
         messages = st.session_state.messages
 
         if messages:
-            render_chat_history(messages, locale)
+            render_chat_history(messages, locale, user_avatar=user_avatar)
             if st.session_state.scroll_to_bottom:
                 st.session_state.scroll_to_bottom = False
                 _scroll_to_bottom()
@@ -246,7 +262,7 @@ def main() -> None:
 
             # Store & display user turn
             st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
+            with st.chat_message("user", avatar=user_avatar):
                 st.markdown(prompt)
 
             # ── Agent call with 3-step progress stepper ───────────────────────
@@ -255,10 +271,12 @@ def main() -> None:
                     step1 = st.empty()
                     step1.caption(f"⏳ {t('step_retrieve', locale)}…")
                     try:
-                        rag_results = retrieve(query=prompt, locale=locale)
+                        rag_result = retrieve(query=prompt, locale=locale)
+                        rag_results, filter_used = rag_result.wines, rag_result.filter_used
                     except Exception:
-                        rag_results = []
+                        rag_results, filter_used = [], {}
                     step1.caption(f"✓ {t('step_retrieve', locale)}")
+                    render_filter_badge(filter_used, locale)  # shown immediately, right after retrieval
 
                     status.update(label=t("step_think", locale))
                     step2 = st.empty()
@@ -270,6 +288,7 @@ def main() -> None:
                         locale=locale,
                         history=_agent_history(st.session_state.messages[:-1], current_query=prompt),
                         precomputed_rag=rag_results,
+                        precomputed_filter=filter_used,
                     )
                     step2.caption(f"✓ {t('step_think', locale)}")
 
@@ -292,6 +311,7 @@ def main() -> None:
                 "content": result.answer,
                 "sources": result.retrieved_wines,
                 "tool_calls": result.tool_calls,
+                "filter_used": result.filter_used,
             })
 
             # ── Update session metrics ────────────────────────────────────────
@@ -308,6 +328,7 @@ def main() -> None:
             db_status = result.status if result.status in ("ok", "error") else "ok"
             query_id = log_query(
                 session_id=session_id,
+                user_id=(_current_user() or {}).get("user_id"),
                 user_query=prompt,
                 locale=locale,
                 model=result.model_used,

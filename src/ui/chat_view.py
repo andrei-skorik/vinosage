@@ -1,6 +1,9 @@
 """Chat view helpers — rendering history, empty state, and message details."""
 from __future__ import annotations
 
+import csv
+import io
+import json
 import random
 from typing import Any
 
@@ -33,6 +36,85 @@ def render_empty_state(locale: str) -> None:
                 st.session_state.queued_prompt = label
 
 
+def _format_filter_chips(filter_used: dict[str, Any]) -> str:
+    """Render the extracted self-query filter as a compact chip string,
+    e.g. 'Red · Italy · ≤ €20.00'."""
+    parts: list[str] = []
+    for key in ("type", "grape", "country", "style"):
+        val = filter_used.get(key)
+        if val:
+            parts.append(str(val))
+    max_price = filter_used.get("max_price_eur")
+    if max_price is not None:
+        try:
+            parts.append(f"≤ €{float(max_price):.2f}")
+        except (TypeError, ValueError):
+            pass
+    return " · ".join(parts)
+
+
+def render_filter_badge(filter_used: dict[str, Any], locale: str) -> None:
+    """Show the self-query filter extracted from the user's message, right after
+    retrieval — so the user can confirm their request was understood correctly."""
+    if not filter_used:
+        return
+    chips = _format_filter_chips(filter_used)
+    if chips:
+        st.caption(f"🔍 {t('searching_for_label', locale)} {chips}")
+
+
+def _format_tool_result(tool_name: str, result: Any, locale: str) -> str:
+    """Human-readable one-line summary of a tool's actual return value.
+
+    Falls back to a generic string for unrecognised shapes — never raises,
+    since this is purely cosmetic.
+    """
+    if result is None:
+        return ""
+    if not isinstance(result, dict):
+        return str(result)
+
+    if "error" in result:
+        err = result["error"]
+        return f"⚠️ {err.get('message') or err.get('code', '?')}"
+
+    try:
+        if tool_name == "pair_with_food":
+            dish = result.get("dish", "")
+            pairings = result.get("pairings", [])
+            if not pairings:
+                return t("tool_no_pairing", locale, dish=dish)
+            titles = ", ".join(p["title"] for p in pairings)
+            return t("tool_pairing_found", locale, dish=dish, count=len(pairings), titles=titles)
+
+        if tool_name == "filter_wines":
+            wines = result.get("wines", [])
+            titles = ", ".join(w["title"] for w in wines)
+            return t("tool_filter_found", locale, count=result.get("count", len(wines)), titles=titles)
+
+        if tool_name == "calculate_budget":
+            basket = result.get("basket", [])
+            total = result.get("grand_total_eur")
+            if total is None:
+                return str(result)
+            count = result.get("selected_count", len(basket))
+            return t("tool_budget_result", locale, count=count, total=f"{total:.2f}")
+
+        if tool_name == "compare_wines":
+            comp = result.get("comparison", [])
+            titles = ", ".join(c["title"] for c in comp)
+            return t("tool_compare_result", locale, titles=titles)
+
+        if tool_name == "wine_stats":
+            metric = result.get("metric", "")
+            value = result.get("value", result.get("value_eur", result.get("value_abv")))
+            return t("tool_stats_result", locale, metric=metric, value=value)
+    except Exception:
+        return str(result)
+
+    return str(result)
+
+
 def render_assistant_extras(
     sources: list[Any],
     tool_calls: list[dict[str, Any]],
@@ -56,15 +138,72 @@ def render_assistant_extras(
         label = t("actions_label", locale)
         with st.expander(label, expanded=False):
             for tc in tool_calls:
-                st.code(f"🔧 {tc.get('tool_name', '?')}", language=None)
+                name = tc.get("tool_name", "?")
+                summary = _format_tool_result(name, tc.get("result"), locale)
+                if summary:
+                    st.markdown(f"🔧 **{name}** → {summary}")
+                else:
+                    st.code(f"🔧 {name}", language=None)
 
 
-def render_chat_history(messages: list[dict[str, Any]], locale: str) -> None:
+def _serialize_sources(sources: list[Any]) -> list[dict[str, Any]]:
+    """Convert RetrievedWine objects into plain JSON-serializable dicts."""
+    out = []
+    for w in sources:
+        payload = getattr(w, "payload", {}) or {}
+        cents = payload.get("price_eur_cents")
+        out.append({
+            "title":     getattr(w, "title", None),
+            "price_eur": round(cents / 100, 2) if cents else None,
+            "country":   payload.get("country"),
+            "type":      payload.get("type"),
+        })
+    return out
+
+
+def export_messages_json(messages: list[dict[str, Any]]) -> str:
+    """Serialize the full conversation (current session) to a JSON string."""
+    serializable = []
+    for m in messages:
+        entry: dict[str, Any] = {"role": m["role"], "content": m["content"]}
+        if m.get("sources"):
+            entry["sources"] = _serialize_sources(m["sources"])
+        if m.get("tool_calls"):
+            entry["tool_calls"] = m["tool_calls"]
+        if m.get("filter_used"):
+            entry["filter_used"] = m["filter_used"]
+        serializable.append(entry)
+    return json.dumps(serializable, ensure_ascii=False, indent=2, default=str)
+
+
+def export_messages_csv(messages: list[dict[str, Any]]) -> str:
+    """Flatten the conversation (current session) into a CSV string —
+    one row per turn, sources/tools summarised as semicolon-joined lists."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["turn", "role", "content", "sources", "tools_used", "filter_used"])
+    for i, m in enumerate(messages, start=1):
+        sources = m.get("sources") or []
+        source_titles = "; ".join(getattr(w, "title", "") or "" for w in sources)
+        tool_names = "; ".join(tc.get("tool_name", "") for tc in (m.get("tool_calls") or []))
+        filter_used = m.get("filter_used") or {}
+        filter_str = json.dumps(filter_used, ensure_ascii=False) if filter_used else ""
+        writer.writerow([i, m["role"], m["content"], source_titles, tool_names, filter_str])
+    return buf.getvalue()
+
+
+def render_chat_history(
+    messages: list[dict[str, Any]],
+    locale: str,
+    user_avatar: str | None = None,
+) -> None:
     for msg in messages:
         role = msg["role"]
-        with st.chat_message(role):
+        avatar = user_avatar if role == "user" else None
+        with st.chat_message(role, avatar=avatar):
             st.markdown(msg["content"])
             if role == "assistant":
+                render_filter_badge(msg.get("filter_used", {}), locale)
                 render_assistant_extras(
                     msg.get("sources", []),
                     msg.get("tool_calls", []),

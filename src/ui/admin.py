@@ -14,6 +14,10 @@ def render_admin(locale: str) -> None:
     _render_stats(locale)
     st.divider()
 
+    st.subheader(t("admin_analytics_header", locale))
+    _render_analytics(locale)
+    st.divider()
+
     st.subheader(t("admin_import_header", locale))
     _render_import(locale)
     st.divider()
@@ -36,6 +40,77 @@ def _render_stats(locale: str) -> None:
         col3.metric(t("pending_embed", locale), pending)
     except Exception as exc:
         st.error(f"Stats unavailable: {exc}")
+
+
+_ANALYTICS_WINDOW = 500  # most recent query_logs rows to aggregate over
+_BATCH_SIZE = 200        # respects URL length limits on .in_() filters
+
+
+def _render_analytics(locale: str) -> None:
+    try:
+        import pandas as pd
+        db = get_service_db()
+
+        ql = (
+            db.table("query_logs")
+            .select("id, created_at, status, locale, latency_ms")
+            .order("created_at", desc=True)
+            .limit(_ANALYTICS_WINDOW)
+            .execute()
+        )
+        if not ql.data:
+            st.info(t("analytics_no_data", locale))
+            return
+
+        ql_df = pd.DataFrame(ql.data)
+        ql_df["created_at"] = pd.to_datetime(ql_df["created_at"])
+        ql_df["date"] = ql_df["created_at"].dt.date
+        ids = ql_df["id"].tolist()
+
+        # Queries over time
+        st.markdown(f"**{t('analytics_queries_over_time', locale)}**")
+        st.bar_chart(ql_df.groupby("date").size())
+
+        # Cost over time — join token_usage (batched .in_() to avoid URL limits)
+        tu_rows: list[dict] = []
+        for i in range(0, len(ids), _BATCH_SIZE):
+            batch = ids[i : i + _BATCH_SIZE]
+            tu = db.table("token_usage").select("query_id, cost_eur_micros").in_("query_id", batch).execute()
+            tu_rows.extend(tu.data)
+
+        st.markdown(f"**{t('analytics_cost_over_time', locale)}**")
+        if tu_rows:
+            tu_df = pd.DataFrame(tu_rows)
+            merged = tu_df.merge(ql_df[["id", "date"]], left_on="query_id", right_on="id", how="left")
+            cost_by_date = merged.groupby("date")["cost_eur_micros"].sum() / 1_000_000
+            st.line_chart(cost_by_date)
+        else:
+            st.caption(t("analytics_no_data", locale))
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**{t('analytics_status_breakdown', locale)}**")
+            st.bar_chart(ql_df["status"].value_counts())
+        with col2:
+            st.markdown(f"**{t('analytics_locale_breakdown', locale)}**")
+            st.bar_chart(ql_df["locale"].value_counts())
+
+        # Tool usage — batched fetch over the same query_id window
+        tcl_rows: list[dict] = []
+        for i in range(0, len(ids), _BATCH_SIZE):
+            batch = ids[i : i + _BATCH_SIZE]
+            tcl = db.table("tool_call_logs").select("tool_name").in_("query_id", batch).execute()
+            tcl_rows.extend(tcl.data)
+
+        st.markdown(f"**{t('analytics_tool_usage', locale)}**")
+        if tcl_rows:
+            tcl_df = pd.DataFrame(tcl_rows)
+            st.bar_chart(tcl_df["tool_name"].value_counts())
+        else:
+            st.caption(t("analytics_no_data", locale))
+
+    except Exception as exc:
+        st.error(f"Analytics unavailable: {exc}")
 
 
 def _render_import(locale: str) -> None:

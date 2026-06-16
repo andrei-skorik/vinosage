@@ -5,6 +5,8 @@ Exposes run_agent() → AgentResult (answer + tool_calls + retrieved wines).
 """
 from __future__ import annotations
 
+import ast
+import json
 import logging
 import re
 import time
@@ -12,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from src.config import (
     CHAT_MODELS,
@@ -116,12 +118,33 @@ class AgentResult:
     answer:          str
     tool_calls:      list[dict[str, Any]] = field(default_factory=list)
     retrieved_wines: list[RetrievedWine]  = field(default_factory=list)
+    filter_used:     dict[str, Any]       = field(default_factory=dict)
     input_tokens:    int = 0
     output_tokens:   int = 0
     latency_ms:      int = 0
     model_used:      str = DEFAULT_MODEL
     status:          str = "ok"
     error_code:      str | None = None
+
+
+def _parse_tool_message_content(raw: Any) -> Any:
+    """Best-effort parse of a ToolMessage's string content back into the
+    original Python value (dict/list) for clean logging and display.
+
+    Tool functions return Python dicts; LangChain's ToolNode stringifies them
+    for the LLM (either as JSON or via repr()) before wrapping in ToolMessage.
+    """
+    if not isinstance(raw, str):
+        return raw
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    try:
+        return ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
+        pass
+    return raw
 
 
 def _build_messages(
@@ -249,6 +272,7 @@ def run_agent(
     locale: str = DEFAULT_LOCALE,
     history: list[dict[str, Any]] | None = None,
     precomputed_rag: list[RetrievedWine] | None = None,
+    precomputed_filter: dict[str, Any] | None = None,
 ) -> AgentResult:
     """Run the tool-calling agent and return a structured result."""
     if locale not in SUPPORTED_LOCALES:
@@ -261,12 +285,16 @@ def run_agent(
     # 1. RAG retrieval for context (skip if caller already retrieved)
     if precomputed_rag is not None:
         rag_results = precomputed_rag
+        filter_used = precomputed_filter or {}
     else:
         try:
-            rag_results = retrieve(query, locale=locale)
+            rag_result = retrieve(query, locale=locale)
+            rag_results = rag_result.wines
+            filter_used = rag_result.filter_used
         except Exception as exc:
             log.warning("RAG retrieval failed: %s", exc)
             rag_results = []
+            filter_used = {}
 
     # 2. Build messages
     messages = _build_messages(query, locale, history, rag_results)
@@ -290,14 +318,26 @@ def run_agent(
             )
             all_msgs = final_state["messages"]
 
-            # Collect tool calls from all AI turns
+            # Collect tool calls from all AI turns, keyed by tool_call_id so the
+            # matching ToolMessage result can be attached to the right entry.
+            tool_call_by_id: dict[str, dict[str, Any]] = {}
             for msg in all_msgs:
                 if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
                     for tc in msg.tool_calls:
-                        tool_calls_log.append({
+                        entry = {
                             "tool_name": tc["name"],
                             "arguments": tc["args"],
-                        })
+                            "result": None,
+                        }
+                        tool_call_by_id[tc["id"]] = entry
+                        tool_calls_log.append(entry)
+
+            # Attach each tool's actual return value to its call entry
+            for msg in all_msgs:
+                if isinstance(msg, ToolMessage):
+                    entry = tool_call_by_id.get(msg.tool_call_id)
+                    if entry is not None:
+                        entry["result"] = _parse_tool_message_content(msg.content)
 
             # Final answer = last AI message
             ai_msgs = [m for m in all_msgs if isinstance(m, AIMessage)]
@@ -318,6 +358,7 @@ def run_agent(
                 answer=final_answer,
                 tool_calls=tool_calls_log,
                 retrieved_wines=rag_results,
+                filter_used=filter_used,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 latency_ms=latency_ms,

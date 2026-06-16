@@ -6,8 +6,13 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-PROJECT_REF   = "lyuwpgbgwhldeeiclyci"
-ACCESS_TOKEN  = os.environ.get("SUPABASE_ACCESS_TOKEN", "REMOVED_TOKEN")
+PROJECT_REF   = os.environ.get("SUPABASE_PROJECT_REF") or sys.exit(
+    "Missing SUPABASE_PROJECT_REF env var (e.g. the <ref> in https://<ref>.supabase.co)"
+)
+ACCESS_TOKEN  = os.environ.get("SUPABASE_ACCESS_TOKEN") or sys.exit(
+    "Missing SUPABASE_ACCESS_TOKEN env var — create one at "
+    "https://supabase.com/dashboard/account/tokens"
+)
 MGMT_URL      = f"https://api.supabase.com/v1/projects/{PROJECT_REF}/database/query"
 
 headers = {

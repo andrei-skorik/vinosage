@@ -96,10 +96,11 @@ Copy `.env.example` to `.env` and fill in every value.
 ## Database Setup
 
 Applies three SQL files to your Supabase project via the Management API.
-Requires `SUPABASE_ACCESS_TOKEN` (create at https://supabase.com/dashboard/account/tokens).
+Requires `SUPABASE_ACCESS_TOKEN` (create at https://supabase.com/dashboard/account/tokens)
+and `SUPABASE_PROJECT_REF` (the `<ref>` in `https://<ref>.supabase.co`) — set both in `.env`.
 
 ```bash
-SUPABASE_ACCESS_TOKEN=sbp_xxx python scripts/apply_sql.py
+python scripts/apply_sql.py
 ```
 
 What it creates:

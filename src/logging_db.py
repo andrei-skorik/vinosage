@@ -29,13 +29,19 @@ def log_query(
     status: str,
     error_code: str | None = None,
     retrieved_ids: list[str] | None = None,
+    user_id: str | None = None,
 ) -> str:
-    """Insert into query_logs. Returns the new query UUID."""
+    """Insert into query_logs. Returns the new query UUID.
+
+    user_id is None for anonymous sessions — the column is nullable so
+    existing anonymous-only logging keeps working unchanged.
+    """
     qid = str(uuid4())
     try:
         _db().table("query_logs").insert({
             "id":            qid,
             "session_id":    session_id,
+            "user_id":       user_id,
             "locale":        locale,
             "user_query":    user_query[:2000],
             "final_answer":  final_answer[:4000],

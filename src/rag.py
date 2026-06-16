@@ -9,7 +9,7 @@ import json
 import logging
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.catalog import get_anon_db
 from src.config import DEFAULT_LOCALE
@@ -27,6 +27,14 @@ class RetrievedWine(BaseModel):
     title:      str
     similarity: float
     payload:    dict[str, Any]
+
+
+class RetrieveResult(BaseModel):
+    """retrieve() return value: ranked wines + the self-query filter that was
+    extracted from the user's query (exposed so the UI can show the user what
+    was understood, e.g. "Searching for: Red · Italy · ≤ €20.00")."""
+    wines:       list[RetrievedWine]
+    filter_used: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Query translation (multi-query) ──────────────────────────────────────────
@@ -138,7 +146,7 @@ def retrieve(
     locale: str = DEFAULT_LOCALE,
     k: int = K_FINAL,
     metadata_filter: dict[str, Any] | None = None,
-) -> list[RetrievedWine]:
+) -> RetrieveResult:
     """Multi-query + self-query filter + RRF.
 
     Translation always happens in English regardless of locale
@@ -152,6 +160,7 @@ def retrieve(
 
     # 3. Per-variant similarity search
     result_lists: list[list[dict]] = []
+    filter_applied = filter_dict
     for variant in variants:
         try:
             vec = embed_text(variant)
@@ -165,16 +174,17 @@ def retrieve(
         if not hits and filter_dict:
             log.info("no results under filter %s; retrying without", filter_dict)
             hits = _match_wines(vec, {}, k=K_PER_VARIANT)
+            filter_applied = {}  # the filter was dropped — reflect that to the caller
 
         result_lists.append(hits)
 
     if not result_lists:
-        return []
+        return RetrieveResult(wines=[], filter_used=filter_applied)
 
     # 4. RRF fusion + dedup
     fused = _rrf_fuse(result_lists)[:k]
 
-    return [
+    wines = [
         RetrievedWine(
             wine_id=row["wine_id"],
             title=row["title"],
@@ -183,3 +193,4 @@ def retrieve(
         )
         for row in fused
     ]
+    return RetrieveResult(wines=wines, filter_used=filter_applied)
