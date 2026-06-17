@@ -97,10 +97,22 @@ def get_profile(access_token: str, refresh_token: str, user_id: str) -> dict[str
         return None
 
 
+def default_avatar_url(user_id: str) -> str:
+    """Deterministic placeholder avatar (DiceBear — public, free, no API key)
+    assigned at registration so every user has something to look at before
+    they optionally upload their own. Seeded by user_id, so it's stable for
+    that user but looks different across users."""
+    return f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={user_id}"
+
+
 def create_profile(access_token: str, refresh_token: str, user_id: str, is_adult: bool) -> bool:
     try:
         client = _authed_client(access_token, refresh_token)
-        client.table("user_profiles").insert({"user_id": user_id, "is_adult": is_adult}).execute()
+        client.table("user_profiles").insert({
+            "user_id":    user_id,
+            "is_adult":   is_adult,
+            "avatar_url": default_avatar_url(user_id),
+        }).execute()
         return True
     except Exception:
         return False

@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from typing import Any
 
 import streamlit as st
 
 from src.auth import (
     AuthSession,
     create_profile,
+    default_avatar_url,
     get_profile,
     get_query_history,
     sign_in,
@@ -21,6 +23,8 @@ from src.auth import (
     sign_up,
     upload_avatar,
 )
+
+AVATAR_MAX_UPLOAD_MB = 2
 from src.i18n import t
 
 _HISTORY_ANSWER_PREVIEW = 400  # chars shown before truncating a past answer
@@ -45,8 +49,18 @@ def render_age_gate(locale: str) -> None:
         st.error(t("age_gate_blocked", locale))
 
 
-def _set_authed_session(session: AuthSession, is_adult_hint: bool | None = None) -> None:
-    profile = get_profile(session.access_token, session.refresh_token, session.user_id)
+def _set_authed_session(
+    session: AuthSession,
+    is_adult_hint: bool | None = None,
+    known_profile: dict[str, Any] | None = None,
+) -> None:
+    """known_profile skips the get_profile() round-trip when the caller already
+    knows the values (e.g. right after registration, where we just inserted
+    them ourselves — re-fetching what we wrote a moment ago is pure latency)."""
+    if known_profile is not None:
+        profile = known_profile
+    else:
+        profile = get_profile(session.access_token, session.refresh_token, session.user_id)
     st.session_state.auth = {
         "user_id":       session.user_id,
         "email":         session.email,
@@ -100,7 +114,13 @@ def render_auth_forms(locale: str) -> None:
                         result.session.user_id,
                         is_adult=True,
                     )
-                    _set_authed_session(result.session, is_adult_hint=True)
+                    _set_authed_session(
+                        result.session,
+                        known_profile={
+                            "is_adult": True,
+                            "avatar_url": default_avatar_url(result.session.user_id),
+                        },
+                    )
                     st.success(t("register_success", locale))
                     st.rerun()
                 elif result.error == "confirm_email":
@@ -110,39 +130,59 @@ def render_auth_forms(locale: str) -> None:
 
 
 def render_profile_widget(locale: str) -> None:
-    """Logged-in view: avatar + email + avatar upload + logout."""
+    """Logged-in view: avatar + email + (collapsed) avatar upload + logout.
+
+    Every user gets a deterministic placeholder avatar at registration (see
+    default_avatar_url) — the upload widget itself stays hidden until the
+    user asks for it, instead of always being shown. Streamlit has no click
+    handler for st.image, so a small pencil button next to the avatar is the
+    closest available stand-in for "click the avatar to change it."
+    """
     auth = st.session_state.get("auth")
     if not auth:
         return
 
-    col_avatar, col_info = st.columns([1, 3])
+    col_avatar, col_edit, col_info = st.columns([1, 1, 2])
     with col_avatar:
         if auth.get("avatar_url"):
             st.image(auth["avatar_url"], width=40)
         else:
             st.markdown("### 👤")
+    with col_edit:
+        if st.button("✏️", key="toggle_avatar_upload", help=t("change_avatar_button", locale)):
+            st.session_state["_show_avatar_uploader"] = not st.session_state.get(
+                "_show_avatar_uploader", False
+            )
     with col_info:
-        st.caption(auth["email"])
+        # Show only the local part of the email (before "@") as a display
+        # name — also avoids Streamlit's markdown auto-linking bare emails
+        # into mailto: links, which isn't useful here.
+        st.caption(auth["email"].split("@")[0])
 
-    uploaded = st.file_uploader(
-        t("avatar_upload_label", locale), type=["png", "jpg", "jpeg"], key="avatar_uploader"
-    )
-    # st.file_uploader keeps returning the SAME file object on every rerun until
-    # the user removes it — without this guard, the upload (and st.rerun() below)
-    # would fire again on every single rerun, looping forever.
-    upload_identity = (uploaded.name, uploaded.size) if uploaded is not None else None
-    if uploaded is not None and st.session_state.get("_last_avatar_upload") != upload_identity:
-        ext = uploaded.name.rsplit(".", 1)[-1].lower()
-        url = upload_avatar(
-            auth["access_token"], auth["refresh_token"], auth["user_id"], uploaded.read(), f"avatar.{ext}"
+    if st.session_state.get("_show_avatar_uploader"):
+        uploaded = st.file_uploader(
+            t("avatar_upload_label", locale),
+            type=["png", "jpg", "jpeg"],
+            key="avatar_uploader",
+            max_upload_size=AVATAR_MAX_UPLOAD_MB,
         )
-        st.session_state["_last_avatar_upload"] = upload_identity
-        if url:
-            st.session_state.auth["avatar_url"] = f"{url}?t={int(time.time())}"  # cache-bust
-            st.success(t("avatar_upload_success", locale))
-            st.rerun()
-        else:
-            st.error(t("avatar_upload_error", locale))
+        # st.file_uploader keeps returning the SAME file object on every rerun
+        # until the user removes it — without this guard, the upload (and
+        # st.rerun() below) would fire again on every single rerun, looping.
+        upload_identity = (uploaded.name, uploaded.size) if uploaded is not None else None
+        if uploaded is not None and st.session_state.get("_last_avatar_upload") != upload_identity:
+            ext = uploaded.name.rsplit(".", 1)[-1].lower()
+            url = upload_avatar(
+                auth["access_token"], auth["refresh_token"], auth["user_id"], uploaded.read(), f"avatar.{ext}"
+            )
+            st.session_state["_last_avatar_upload"] = upload_identity
+            if url:
+                st.session_state.auth["avatar_url"] = f"{url}?t={int(time.time())}"  # cache-bust
+                st.session_state["_show_avatar_uploader"] = False  # collapse once done
+                st.success(t("avatar_upload_success", locale))
+                st.rerun()
+            else:
+                st.error(t("avatar_upload_error", locale))
 
     if st.button(f"🚪 {t('logout_button', locale)}", use_container_width=True, key="logout_btn"):
         sign_out(auth["access_token"], auth["refresh_token"])
@@ -174,13 +214,21 @@ def render_history_view(locale: str) -> None:
         return
 
     with st.expander(f"📜 {t('history_header', locale)}"):
+        # Fetched only on explicit click, never automatically on login/rerun —
+        # this is the one query_logs round-trip we can fully defer until the
+        # user actually wants to see it.
+        if "_history_cache" not in st.session_state:
+            if st.button(t("history_load", locale), key="history_load_btn"):
+                st.session_state["_history_cache"] = get_query_history(
+                    auth["access_token"], auth["refresh_token"], auth["user_id"]
+                )
+                st.rerun()
+            return
+
         if st.button(t("history_refresh", locale), key="history_refresh_btn"):
             st.session_state.pop("_history_cache", None)
+            st.rerun()
 
-        if "_history_cache" not in st.session_state:
-            st.session_state["_history_cache"] = get_query_history(
-                auth["access_token"], auth["refresh_token"], auth["user_id"]
-            )
         history = st.session_state["_history_cache"]
 
         if not history:
