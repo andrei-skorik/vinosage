@@ -7,11 +7,23 @@ not gate any catalog/chat functionality by itself.
 from __future__ import annotations
 
 import time
+from datetime import datetime
 
 import streamlit as st
 
-from src.auth import AuthSession, create_profile, get_profile, sign_in, sign_out, sign_up, upload_avatar
+from src.auth import (
+    AuthSession,
+    create_profile,
+    get_profile,
+    get_query_history,
+    sign_in,
+    sign_out,
+    sign_up,
+    upload_avatar,
+)
 from src.i18n import t
+
+_HISTORY_ANSWER_PREVIEW = 400  # chars shown before truncating a past answer
 
 
 def is_age_gate_passed() -> bool:
@@ -136,3 +148,51 @@ def render_profile_widget(locale: str) -> None:
         sign_out(auth["access_token"], auth["refresh_token"])
         st.session_state.auth = None
         st.rerun()
+
+
+def _format_local_time(iso_ts: str) -> str:
+    """query_logs.created_at comes back from Supabase as UTC (e.g.
+    '...T08:09:23+00:00'). Convert to the server's local timezone before
+    display — for a locally-run app this matches the user's own clock."""
+    if not iso_ts:
+        return ""
+    try:
+        return datetime.fromisoformat(iso_ts).astimezone().strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return iso_ts[:16].replace("T", " ")
+
+
+def render_history_view(locale: str) -> None:
+    """Read-only list of this user's past queries, pulled from query_logs.
+
+    Persists across browser sessions/devices (unlike the in-memory current
+    chat) — only visible to logged-in users, and only their own rows thanks
+    to the ql_own_read RLS policy.
+    """
+    auth = st.session_state.get("auth")
+    if not auth:
+        return
+
+    with st.expander(f"📜 {t('history_header', locale)}"):
+        if st.button(t("history_refresh", locale), key="history_refresh_btn"):
+            st.session_state.pop("_history_cache", None)
+
+        if "_history_cache" not in st.session_state:
+            st.session_state["_history_cache"] = get_query_history(
+                auth["access_token"], auth["refresh_token"], auth["user_id"]
+            )
+        history = st.session_state["_history_cache"]
+
+        if not history:
+            st.caption(t("history_empty", locale))
+            return
+
+        for row in history:
+            ts = _format_local_time(row.get("created_at") or "")
+            answer = row.get("final_answer") or ""
+            if len(answer) > _HISTORY_ANSWER_PREVIEW:
+                answer = answer[:_HISTORY_ANSWER_PREVIEW].rstrip() + "…"
+            with st.container(border=True):
+                st.caption(ts)
+                st.markdown(f"🧑 {row.get('user_query', '')}")
+                st.markdown(f"🤖 {answer}")

@@ -106,6 +106,32 @@ def create_profile(access_token: str, refresh_token: str, user_id: str, is_adult
         return False
 
 
+def get_query_history(
+    access_token: str,
+    refresh_token: str,
+    user_id: str,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Return this user's past queries, most recent first.
+
+    Relies on the ql_own_read RLS policy (auth.uid() = user_id) — a logged-in
+    user can only ever see their own rows, never another user's.
+    """
+    try:
+        client = _authed_client(access_token, refresh_token)
+        resp = (
+            client.table("query_logs")
+            .select("id, created_at, user_query, final_answer, locale, status")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return resp.data or []
+    except Exception:
+        return []
+
+
 def upload_avatar(
     access_token: str,
     refresh_token: str,
