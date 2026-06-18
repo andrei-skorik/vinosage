@@ -130,6 +130,7 @@ def render_sidebar() -> None:
                     t("admin_password_label", locale),
                     type="password",
                     key="admin_pwd_input",
+                    autocomplete="current-password",
                 )
                 if st.button(t("admin_unlock", locale), key="admin_unlock_btn"):
                     if pwd == ADMIN_PASSWORD:
