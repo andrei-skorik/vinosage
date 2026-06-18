@@ -76,6 +76,19 @@ def _source_key(title: str, vintage_year: int | None, is_nv: bool, capacity_ml: 
 
 def normalise_row(row: dict[str, str]) -> dict[str, Any] | None:
     """Return a wines-table dict or None if the row must be skipped."""
+    # pandas.read_csv() (used by the admin panel's CSV import) infers a dtype
+    # per column from the data it sees. An empty cell becomes float NaN, not
+    # "" (and NaN is truthy in Python, so "if not raw" guards wouldn't catch
+    # it). A column that's all-numeric in a given CSV — e.g. "Vintage" with
+    # no "NV" rows to force object dtype — comes back as int/float per cell,
+    # not str. csv.DictReader (the CLI ingest path) always yields "", so this
+    # normalisation is a no-op there regardless. NaN's defining property is
+    # that it's the only value not equal to itself.
+    row = {
+        k: "" if v is None or (isinstance(v, float) and v != v) else str(v)
+        for k, v in row.items()
+    }
+
     title = row.get("Title", "").strip()
     if not title:
         return None
