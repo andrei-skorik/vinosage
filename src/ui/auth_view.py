@@ -80,8 +80,19 @@ def render_auth_forms(locale: str) -> None:
 
     with tab_login:
         with st.form("login_form", border=False):
-            email = st.text_input(t("email_label", locale), key="login_email")
-            password = st.text_input(t("password_label", locale), type="password", key="login_password")
+            email = st.text_input(
+                t("email_label", locale), key="login_email", autocomplete="username"
+            )
+            # autocomplete="current-password" tells the browser this is an
+            # existing password to fill in, not one to generate — without it,
+            # browsers guess from form context (and guess wrong here, since
+            # the register tab's password fields sit in the same DOM).
+            password = st.text_input(
+                t("password_label", locale),
+                type="password",
+                key="login_password",
+                autocomplete="current-password",
+            )
             submitted = st.form_submit_button(t("login_button", locale), use_container_width=True)
         if submitted:
             result = sign_in(email, password)
@@ -93,9 +104,21 @@ def render_auth_forms(locale: str) -> None:
 
     with tab_register:
         with st.form("register_form", border=False):
-            email = st.text_input(t("email_label", locale), key="register_email")
-            password = st.text_input(t("password_label", locale), type="password", key="register_password")
-            confirm = st.text_input(t("confirm_password_label", locale), type="password", key="register_confirm")
+            email = st.text_input(
+                t("email_label", locale), key="register_email", autocomplete="username"
+            )
+            password = st.text_input(
+                t("password_label", locale),
+                type="password",
+                key="register_password",
+                autocomplete="new-password",
+            )
+            confirm = st.text_input(
+                t("confirm_password_label", locale),
+                type="password",
+                key="register_confirm",
+                autocomplete="new-password",
+            )
             is_adult = st.checkbox(t("age_confirm_checkbox", locale), key="register_is_adult")
             submitted = st.form_submit_button(t("register_button", locale), use_container_width=True)
         if submitted:
