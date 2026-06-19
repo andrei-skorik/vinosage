@@ -19,7 +19,7 @@ _WINES_DATA = [
         "is_nv":           False,
         "is_active":       True,
         "characteristics": "Bold, tannic, dark fruit",
-        "description":     "A classic Bordeaux blend",
+        "description":     "A classic Bordeaux blend, perfect with a grilled steak or other fish dishes.",
     },
     {
         "wine_id":         "11111111-0000-0000-0000-000000000002",
@@ -35,7 +35,7 @@ _WINES_DATA = [
         "is_nv":           False,
         "is_active":       True,
         "characteristics": "Crisp, mineral, citrus",
-        "description":     "Light and refreshing",
+        "description":     "Light and refreshing, wonderful with grilled salmon or other fish dishes.",
     },
     {
         "wine_id":         "11111111-0000-0000-0000-000000000003",
@@ -51,7 +51,7 @@ _WINES_DATA = [
         "is_nv":           False,
         "is_active":       True,
         "characteristics": "Plum, chocolate, smooth",
-        "description":     "Rich Argentine Malbec",
+        "description":     "Rich Argentine Malbec, ideal for barbecue ribs.",
     },
     {
         "wine_id":         "11111111-0000-0000-0000-000000000004",
@@ -83,7 +83,7 @@ _WINES_DATA = [
         "is_nv":           True,
         "is_active":       True,
         "characteristics": "Nutty, caramel, dried fruit",
-        "description":     "Classic tawny port",
+        "description":     "Classic tawny port, lovely with a chocolate dessert.",
     },
     {
         "wine_id":         "11111111-0000-0000-0000-000000000006",

@@ -4,60 +4,12 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-import pandas as pd
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from src.catalog import get_active_wines_df
 
 _ERR = lambda code, msg: {"error": {"code": code, "message": msg}}   # noqa: E731
-
-# keyword → preferred wine type/style when no catalog description match exists
-PAIRING_RULES: dict[str, dict[str, Any]] = {
-    "steak":     {"type": "Red",   "styles": ["Rich & Juicy", "Bold & Spicy"]},
-    "beef":      {"type": "Red",   "styles": ["Rich & Juicy"]},
-    "lamb":      {"type": "Red",   "styles": ["Rich & Juicy"]},
-    "venison":   {"type": "Red"},
-    "pork":      {"type": "Red",   "styles": ["Light & Fruity"]},
-    "chicken":   {"type": "White", "styles": ["Rich & Toasty", "Crisp & Zesty"]},
-    "turkey":    {"type": "White"},
-    "duck":      {"type": "Red",   "styles": ["Light & Fruity"]},
-    "salmon":    {"type": "White", "styles": ["Rich & Toasty"]},
-    "tuna":      {"type": "White", "styles": ["Crisp & Zesty"]},
-    "fish":      {"type": "White", "styles": ["Crisp & Zesty", "Light & Fresh"]},
-    "seafood":   {"type": "White", "styles": ["Crisp & Zesty"]},
-    "lobster":   {"type": "White"},
-    "shrimp":    {"type": "White"},
-    "oyster":    {"type": "White", "styles": ["Crisp & Zesty"]},
-    "sushi":     {"type": "White"},
-    "pasta":     {"type": "Red"},
-    "pizza":     {"type": "Red"},
-    "risotto":   {"type": "White"},
-    "mushroom":  {"type": "Red",   "grapes": ["Pinot Noir"]},
-    "truffle":   {"type": "Red",   "grapes": ["Pinot Noir"]},
-    "cheese":    {"type": "Red"},
-    "salad":     {"type": "White", "styles": ["Crisp & Zesty"]},
-    "dessert":   {"type": "Tawny"},
-    "chocolate": {"type": "Tawny"},
-    "spicy":     {"styles": ["Light & Fruity", "Crisp & Zesty"]},
-    "bbq":       {"type": "Red",   "styles": ["Rich & Juicy", "Bold & Spicy"]},
-    "barbecue":  {"type": "Red",   "styles": ["Rich & Juicy"]},
-    "curry":     {"styles": ["Light & Fruity", "Crisp & Zesty"]},
-    "indian":    {"styles": ["Light & Fruity"]},
-    "asian":     {"type": "White"},
-    "thai":      {"type": "White"},
-    "mexican":   {"type": "Red"},
-    "tapas":     {"type": "Red",   "styles": ["Light & Fruity"]},
-}
-
-
-def _best_rule(dish: str) -> dict[str, Any]:
-    dl = dish.lower()
-    for kw, rule in PAIRING_RULES.items():
-        if kw in dl:
-            return rule
-    return {}
-
 
 # Compound patterns for keywords that also appear as tasting-note descriptors.
 # A simple word-boundary match would produce false positives:
@@ -175,6 +127,9 @@ def _run(
         catalog_matches = df[active & desc_hit].copy()
         catalog_matches["_source"] = "catalog_description"
 
+        if prefer_type and prefer_type != "any":
+            catalog_matches = catalog_matches[catalog_matches["type"] == prefer_type]
+
         if max_price_eur is not None:
             max_cents = int(max_price_eur * 100)
             catalog_matches = catalog_matches[
@@ -182,9 +137,9 @@ def _run(
                 (catalog_matches["price_eur_cents"] <= max_cents)
             ]
 
-        # Only return wines with explicit catalog description evidence.
-        # Style-rule matches are excluded: the LLM ignores the "pairing_rule" signal
-        # and invents pairing claims regardless, causing hallucinations.
+        # Only catalog-description evidence is ever returned — no style/type
+        # fallback rules. A fallback would let the LLM invent pairing claims
+        # for dishes the catalog never actually confirms.
         pool = catalog_matches.sort_values("price_eur_cents", ascending=True)
 
         if pool.empty:
