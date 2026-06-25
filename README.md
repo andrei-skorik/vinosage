@@ -4,7 +4,7 @@
 
 A domain-specialised RAG chatbot for an online wine shop.
 Recommends, compares, and budgets wines from a live 1289-item catalog
-using a LangGraph tool-calling agent with 5 specialised tools and
+using a LangChain tool-calling agent with 5 specialised tools and
 multi-query RAG with RRF fusion.
 
 Supports 4 languages (EN / DE / RU / FI), includes rate limiting,
