@@ -75,11 +75,12 @@ def render_sidebar() -> None:
         col1.metric(t("tokens_in_label", locale),  f"{tokens_in:,}")
         col2.metric(t("tokens_out_label", locale), f"{tokens_out:,}")
 
+        # Full-width (not 2-col like tokens above) — "€0.0072" + a long label
+        # gets clipped to "€0.0..." in a half-width sidebar column.
         cost_eur = cost_micros / 1_000_000
-        col3, col4 = st.columns(2)
-        col3.metric(t("session_cost_label", locale), f"€{cost_eur:.4f}")
+        st.metric(t("session_cost_label", locale), f"€{cost_eur:.4f}")
         if latency_ms:
-            col4.metric(t("latency_label", locale), t("latency_value", locale, ms=latency_ms))
+            st.metric(t("latency_label", locale), t("latency_value", locale, ms=latency_ms))
 
         st.divider()
 
